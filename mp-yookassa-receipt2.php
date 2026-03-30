@@ -25,6 +25,11 @@ final class MP_Yookassa_Receipt2_Plugin {
 			require_once __DIR__ . '/mp-yookassa-receipt2-logger.php';
 		}
 
+		// Step 4: API client loader.
+		if (!class_exists('MP_Yookassa_Receipt2_ApiClient')) {
+			require_once __DIR__ . '/mp-yookassa-receipt2-api-client.php';
+		}
+
 		// Register trigger for "delivery/fulfillment" stage.
 		// (Step 2/next steps will implement actual logic.)
 		add_action('woocommerce_order_status_completed', [self::class, 'on_order_completed'], 20, 1);
