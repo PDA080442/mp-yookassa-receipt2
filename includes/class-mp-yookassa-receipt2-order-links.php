@@ -230,7 +230,8 @@ final class MP_Yookassa_Receipt2_OrderLinks {
 
 		foreach ($fees as $fee) {
 			$total = (float) $fee->get_total();
-			$name = mb_strtolower((string) $fee->get_name());
+			$raw_name = (string) $fee->get_name();
+			$name = function_exists('mb_strtolower') ? mb_strtolower($raw_name) : strtolower($raw_name);
 			$is_gift_card_line = strpos($name, 'gift card') !== false
 				|| strpos($name, 'pwgc') !== false
 				|| strpos($name, 'подароч') !== false;

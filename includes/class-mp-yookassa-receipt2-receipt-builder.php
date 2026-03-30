@@ -113,8 +113,9 @@ final class MP_Yookassa_Receipt2_ReceiptBuilder {
 		if ($name === '') {
 			return 'Product';
 		}
-		if (mb_strlen($name) > 128) {
-			return mb_substr($name, 0, 128);
+		$length = function_exists('mb_strlen') ? mb_strlen($name) : strlen($name);
+		if ($length > 128) {
+			return function_exists('mb_substr') ? mb_substr($name, 0, 128) : substr($name, 0, 128);
 		}
 
 		return $name;
