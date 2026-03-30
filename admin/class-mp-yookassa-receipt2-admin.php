@@ -104,10 +104,13 @@ final class MP_Yookassa_Receipt2_Admin {
 
 		$allowed_modes = MP_Yookassa_Receipt2_Settings::allowed_payment_modes();
 		$allowed_subjects = MP_Yookassa_Receipt2_Settings::allowed_payment_subjects();
+		$valid_category_ids = self::get_valid_product_category_ids();
 		$normalized = [];
+		$skipped = 0;
 
 		foreach ($rules as $rule) {
 			if (!is_array($rule)) {
+				$skipped++;
 				continue;
 			}
 			$enabled = !empty($rule['enabled']);
@@ -115,6 +118,7 @@ final class MP_Yookassa_Receipt2_Admin {
 			$payment_mode = isset($rule['payment_mode']) ? trim((string) $rule['payment_mode']) : '';
 			$payment_subject = isset($rule['payment_subject']) ? trim((string) $rule['payment_subject']) : '';
 			if (!in_array($payment_mode, $allowed_modes, true) || !in_array($payment_subject, $allowed_subjects, true)) {
+				$skipped++;
 				continue;
 			}
 
@@ -122,13 +126,14 @@ final class MP_Yookassa_Receipt2_Admin {
 			if (!empty($rule['category_ids']) && is_array($rule['category_ids'])) {
 				foreach ($rule['category_ids'] as $cat_id) {
 					$cat_id = (int) $cat_id;
-					if ($cat_id > 0) {
+					if ($cat_id > 0 && isset($valid_category_ids[$cat_id])) {
 						$category_ids[] = $cat_id;
 					}
 				}
 			}
 			$category_ids = array_values(array_unique($category_ids));
 			if (empty($category_ids)) {
+				$skipped++;
 				continue;
 			}
 
@@ -145,7 +150,40 @@ final class MP_Yookassa_Receipt2_Admin {
 			return ((int) $b['priority']) <=> ((int) $a['priority']);
 		});
 
+		if ($skipped > 0) {
+			add_settings_error(
+				'mp_yookassa_receipt2',
+				'mp_receipt2_rules_skipped',
+				sprintf('Некоторые правила (%d) не сохранены: невалидные значения или категории.', $skipped),
+				'warning'
+			);
+		}
+
 		return $normalized;
+	}
+
+	/**
+	 * @return array<int,bool>
+	 */
+	private static function get_valid_product_category_ids(): array {
+		$result = [];
+		$terms = get_terms([
+			'taxonomy' => 'product_cat',
+			'hide_empty' => false,
+			'fields' => 'ids',
+		]);
+		if (is_wp_error($terms) || !is_array($terms)) {
+			return $result;
+		}
+
+		foreach ($terms as $term_id) {
+			$term_id = (int) $term_id;
+			if ($term_id > 0) {
+				$result[$term_id] = true;
+			}
+		}
+
+		return $result;
 	}
 
 	public static function render_page(): void {
