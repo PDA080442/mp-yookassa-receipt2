@@ -59,14 +59,23 @@ final class MP_Yookassa_Receipt2_OrderLinks {
 			return $result;
 		}
 
-		// 1) Settlement amount from explicit order meta (preferred).
-		$settlement_amount_meta = (float) get_post_meta($order_id, self::META_SETTLEMENT_AMOUNT, true);
-		if ($settlement_amount_meta > 0) {
-			$result['settlement_amount'] = (float) wc_format_decimal($settlement_amount_meta, wc_get_price_decimals());
+		// 1) Settlement amount + card numbers from PW Gift Card order items (preferred).
+		$pw_gc = self::detect_from_pw_gift_card_items($order);
+		if ($pw_gc['settlement_amount'] > 0) {
+			$result['settlement_amount'] = $pw_gc['settlement_amount'];
 			$result['is_gift_card_settlement'] = true;
+			$result['reason'] = 'detected_from_pw_gift_card_items';
 		}
 
-		// 2) Fallback heuristic: detect gift-card discount from negative fee lines.
+		// 2) Settlement amount from explicit order meta.
+		$settlement_amount_meta = (float) get_post_meta($order_id, self::META_SETTLEMENT_AMOUNT, true);
+		if ($settlement_amount_meta > 0 && !$result['is_gift_card_settlement']) {
+			$result['settlement_amount'] = (float) wc_format_decimal($settlement_amount_meta, wc_get_price_decimals());
+			$result['is_gift_card_settlement'] = true;
+			$result['reason'] = 'detected_from_meta';
+		}
+
+		// 3) Fallback heuristic: detect gift-card discount from negative fee lines.
 		if (!$result['is_gift_card_settlement']) {
 			$fee_based_amount = self::detect_settlement_amount_from_fees($order);
 			if ($fee_based_amount > 0) {
@@ -80,6 +89,17 @@ final class MP_Yookassa_Receipt2_OrderLinks {
 		$source_payment_id = trim((string) get_post_meta($order_id, self::META_SOURCE_PAYMENT_ID, true));
 		if ($source_payment_id !== '') {
 			$result['source_payment_id'] = $source_payment_id;
+		}
+
+		// 3.1) Try resolving source payment by used card numbers via WGPC table.
+		if ($result['source_payment_id'] === '' && !empty($pw_gc['card_numbers'])) {
+			$resolved_by_cards = self::resolve_payment_id_by_card_numbers($pw_gc['card_numbers']);
+			if ($resolved_by_cards['payment_id'] !== '') {
+				$result['source_payment_id'] = $resolved_by_cards['payment_id'];
+				$result['reason'] = $resolved_by_cards['reason'];
+			} elseif ($resolved_by_cards['reason'] !== '') {
+				$result['reason'] = $resolved_by_cards['reason'];
+			}
 		}
 
 		/**
@@ -97,6 +117,104 @@ final class MP_Yookassa_Receipt2_OrderLinks {
 		}
 
 		return $result;
+	}
+
+	/**
+	 * Detect settlement amount and card numbers from PW Gift Card order item type.
+	 *
+	 * @param WC_Order $order
+	 * @return array{settlement_amount:float,card_numbers:array<int,string>}
+	 */
+	private static function detect_from_pw_gift_card_items(WC_Order $order): array {
+		$amount = 0.0;
+		$card_numbers = [];
+
+		$lines = $order->get_items('pw_gift_card');
+		foreach ($lines as $line) {
+			$line_amount = 0.0;
+			if (method_exists($line, 'get_amount')) {
+				$line_amount = (float) $line->get_amount();
+			}
+
+			if ($line_amount > 0) {
+				$amount += $line_amount;
+			}
+
+			$card = '';
+			if (method_exists($line, 'get_card_number')) {
+				$card = trim((string) $line->get_card_number());
+			}
+			if ($card !== '') {
+				$card_numbers[] = $card;
+			}
+		}
+
+		$card_numbers = array_values(array_unique($card_numbers));
+		$amount = (float) wc_format_decimal($amount, wc_get_price_decimals());
+
+		return [
+			'settlement_amount' => $amount,
+			'card_numbers' => $card_numbers,
+		];
+	}
+
+	/**
+	 * Resolve source YooKassa payment id by used card numbers:
+	 * card_number -> wgpc table row -> issuance order_id -> transaction_id.
+	 *
+	 * @param array<int,string> $card_numbers
+	 * @return array{payment_id:string,reason:string}
+	 */
+	private static function resolve_payment_id_by_card_numbers(array $card_numbers): array {
+		global $wpdb;
+
+		if (empty($card_numbers) || !isset($wpdb)) {
+			return ['payment_id' => '', 'reason' => 'no_card_numbers_for_source_lookup'];
+		}
+
+		$table_name = '';
+		if (function_exists('wgpc_get_table_name')) {
+			$table_name = (string) wgpc_get_table_name();
+		}
+		if ($table_name === '') {
+			$table_name = $wpdb->prefix . 'mpgc_physical_cards';
+		}
+
+		$payment_ids = [];
+		foreach ($card_numbers as $card_number) {
+			$order_id = (int) $wpdb->get_var(
+				$wpdb->prepare(
+					"SELECT order_id FROM {$table_name} WHERE card_number = %s LIMIT 1",
+					$card_number
+				)
+			);
+			if ($order_id <= 0) {
+				continue;
+			}
+
+			$issuance_order = wc_get_order($order_id);
+			if (!$issuance_order) {
+				continue;
+			}
+
+			$payment_id = trim((string) $issuance_order->get_transaction_id());
+			if ($payment_id === '') {
+				$payment_id = trim((string) get_post_meta($order_id, '_transaction_id', true));
+			}
+			if ($payment_id !== '') {
+				$payment_ids[] = $payment_id;
+			}
+		}
+
+		$payment_ids = array_values(array_unique($payment_ids));
+		if (count($payment_ids) === 1) {
+			return ['payment_id' => $payment_ids[0], 'reason' => 'resolved_by_card_number_issuance_order'];
+		}
+		if (count($payment_ids) > 1) {
+			return ['payment_id' => '', 'reason' => 'multiple_source_payment_ids_found'];
+		}
+
+		return ['payment_id' => '', 'reason' => 'source_payment_id_not_found_by_card_number'];
 	}
 
 	/**
