@@ -35,6 +35,11 @@ final class MP_Yookassa_Receipt2_Plugin {
 			require_once __DIR__ . '/mp-yookassa-receipt2-order-links.php';
 		}
 
+		// Step 6: receipt builder.
+		if (!class_exists('MP_Yookassa_Receipt2_ReceiptBuilder')) {
+			require_once __DIR__ . '/mp-yookassa-receipt2-receipt-builder.php';
+		}
+
 		// Register trigger for "delivery/fulfillment" stage.
 		// (Step 2/next steps will implement actual logic.)
 		add_action('woocommerce_order_status_completed', [self::class, 'on_order_completed'], 20, 1);
@@ -91,12 +96,17 @@ final class MP_Yookassa_Receipt2_Plugin {
 			return;
 		}
 
-		// Temporary debug log until we add actual sending logic.
+		$receipt_data = MP_Yookassa_Receipt2_ReceiptBuilder::build($order, (float) $resolved['settlement_amount']);
+
+		// Temporary debug log until we add actual sending logic (step 7).
 		if (class_exists('MP_Yookassa_Receipt2_Logger')) {
-			MP_Yookassa_Receipt2_Logger::log('DEBUG', (int) $order_id, 'woocommerce_order_status_completed_fired', [
+			MP_Yookassa_Receipt2_Logger::log('DEBUG', (int) $order_id, 'receipt_built_ready_for_send', [
 				'settlement_amount' => $resolved['settlement_amount'],
 				'source_payment_id' => $resolved['source_payment_id'],
 				'reason' => $resolved['reason'],
+				'items_count' => is_array($receipt_data['items']) ? count($receipt_data['items']) : 0,
+				'total_items_amount' => $receipt_data['total_items_amount'],
+				'warnings' => $receipt_data['warnings'],
 			]);
 		}
 	}
