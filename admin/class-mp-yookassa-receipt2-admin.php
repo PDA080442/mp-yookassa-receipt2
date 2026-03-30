@@ -48,6 +48,21 @@ final class MP_Yookassa_Receipt2_Admin {
 			'sanitize_callback' => [self::class, 'sanitize_checkbox'],
 			'default' => false,
 		]);
+		register_setting('mp_yookassa_receipt2', MP_Yookassa_Receipt2_Settings::OPTION_DEFAULT_PAYMENT_MODE, [
+			'type' => 'string',
+			'sanitize_callback' => [self::class, 'sanitize_payment_mode'],
+			'default' => 'full_payment',
+		]);
+		register_setting('mp_yookassa_receipt2', MP_Yookassa_Receipt2_Settings::OPTION_DEFAULT_PAYMENT_SUBJECT, [
+			'type' => 'string',
+			'sanitize_callback' => [self::class, 'sanitize_payment_subject'],
+			'default' => 'commodity',
+		]);
+		register_setting('mp_yookassa_receipt2', MP_Yookassa_Receipt2_Settings::OPTION_RULES, [
+			'type' => 'array',
+			'sanitize_callback' => [self::class, 'sanitize_rules'],
+			'default' => [],
+		]);
 	}
 
 	public static function sanitize_checkbox($value): bool {
@@ -60,6 +75,77 @@ final class MP_Yookassa_Receipt2_Admin {
 
 	public static function sanitize_secret_key($value): string {
 		return trim((string) $value);
+	}
+
+	public static function sanitize_payment_mode($value): string {
+		$value = trim((string) $value);
+		if (!in_array($value, MP_Yookassa_Receipt2_Settings::allowed_payment_modes(), true)) {
+			return 'full_payment';
+		}
+		return $value;
+	}
+
+	public static function sanitize_payment_subject($value): string {
+		$value = trim((string) $value);
+		if (!in_array($value, MP_Yookassa_Receipt2_Settings::allowed_payment_subjects(), true)) {
+			return 'commodity';
+		}
+		return $value;
+	}
+
+	/**
+	 * @param mixed $rules
+	 * @return array<int,array<string,mixed>>
+	 */
+	public static function sanitize_rules($rules): array {
+		if (!is_array($rules)) {
+			return [];
+		}
+
+		$allowed_modes = MP_Yookassa_Receipt2_Settings::allowed_payment_modes();
+		$allowed_subjects = MP_Yookassa_Receipt2_Settings::allowed_payment_subjects();
+		$normalized = [];
+
+		foreach ($rules as $rule) {
+			if (!is_array($rule)) {
+				continue;
+			}
+			$enabled = !empty($rule['enabled']);
+			$priority = isset($rule['priority']) ? (int) $rule['priority'] : 100;
+			$payment_mode = isset($rule['payment_mode']) ? trim((string) $rule['payment_mode']) : '';
+			$payment_subject = isset($rule['payment_subject']) ? trim((string) $rule['payment_subject']) : '';
+			if (!in_array($payment_mode, $allowed_modes, true) || !in_array($payment_subject, $allowed_subjects, true)) {
+				continue;
+			}
+
+			$category_ids = [];
+			if (!empty($rule['category_ids']) && is_array($rule['category_ids'])) {
+				foreach ($rule['category_ids'] as $cat_id) {
+					$cat_id = (int) $cat_id;
+					if ($cat_id > 0) {
+						$category_ids[] = $cat_id;
+					}
+				}
+			}
+			$category_ids = array_values(array_unique($category_ids));
+			if (empty($category_ids)) {
+				continue;
+			}
+
+			$normalized[] = [
+				'enabled' => $enabled,
+				'priority' => $priority,
+				'category_ids' => $category_ids,
+				'payment_mode' => $payment_mode,
+				'payment_subject' => $payment_subject,
+			];
+		}
+
+		usort($normalized, static function ($a, $b) {
+			return ((int) $b['priority']) <=> ((int) $a['priority']);
+		});
+
+		return $normalized;
 	}
 
 	public static function render_page(): void {
@@ -75,6 +161,16 @@ final class MP_Yookassa_Receipt2_Admin {
 		$shop_id = MP_Yookassa_Receipt2_Settings::get_shop_id();
 		$secret = MP_Yookassa_Receipt2_Settings::get_secret_key();
 		$debug = (bool) get_option('mp_yookassa_receipt2_debug', false);
+		$default_mode = MP_Yookassa_Receipt2_Settings::get_default_payment_mode();
+		$default_subject = MP_Yookassa_Receipt2_Settings::get_default_payment_subject();
+		$rules = MP_Yookassa_Receipt2_Settings::get_rules();
+		$categories = get_terms([
+			'taxonomy' => 'product_cat',
+			'hide_empty' => false,
+		]);
+		if (!is_array($categories)) {
+			$categories = [];
+		}
 		$errors = MP_Yookassa_Receipt2_Settings::validate_for_api();
 		$log_path = self::get_current_log_path();
 		$log_tail = self::tail_log($log_path, 25);
@@ -111,7 +207,125 @@ final class MP_Yookassa_Receipt2_Admin {
 								<th scope="row">Debug лог</th>
 								<td><label><input type="checkbox" name="mp_yookassa_receipt2_debug" value="1" <?php checked($debug); ?>> Писать расширенный контекст в лог</label></td>
 							</tr>
+							<tr>
+								<th scope="row">Default: Признак способа расчета</th>
+								<td>
+									<select name="<?php echo esc_attr(MP_Yookassa_Receipt2_Settings::OPTION_DEFAULT_PAYMENT_MODE); ?>">
+										<?php foreach (MP_Yookassa_Receipt2_Settings::allowed_payment_modes() as $mode) : ?>
+											<option value="<?php echo esc_attr($mode); ?>" <?php selected($default_mode, $mode); ?>><?php echo esc_html($mode); ?></option>
+										<?php endforeach; ?>
+									</select>
+								</td>
+							</tr>
+							<tr>
+								<th scope="row">Default: Признак предмета расчета</th>
+								<td>
+									<select name="<?php echo esc_attr(MP_Yookassa_Receipt2_Settings::OPTION_DEFAULT_PAYMENT_SUBJECT); ?>">
+										<?php foreach (MP_Yookassa_Receipt2_Settings::allowed_payment_subjects() as $subject) : ?>
+											<option value="<?php echo esc_attr($subject); ?>" <?php selected($default_subject, $subject); ?>><?php echo esc_html($subject); ?></option>
+										<?php endforeach; ?>
+									</select>
+								</td>
+							</tr>
 						</table>
+
+						<h3>Правила второго чека по категориям</h3>
+						<p>Если правило подходит по категории, его значения заменяют default. Приоритет выше = применяется раньше.</p>
+
+						<table class="widefat striped" id="mp-receipt2-rules-table">
+							<thead>
+								<tr>
+									<th style="width:90px;">Вкл</th>
+									<th style="width:120px;">Приоритет</th>
+									<th>Категории</th>
+									<th style="width:220px;">payment_mode</th>
+									<th style="width:220px;">payment_subject</th>
+									<th style="width:80px;">Удалить</th>
+								</tr>
+							</thead>
+							<tbody>
+								<?php foreach ($rules as $idx => $rule) : ?>
+									<tr>
+										<td>
+											<input type="hidden" name="<?php echo esc_attr(MP_Yookassa_Receipt2_Settings::OPTION_RULES . '[' . $idx . '][enabled]'); ?>" value="0">
+											<label><input type="checkbox" name="<?php echo esc_attr(MP_Yookassa_Receipt2_Settings::OPTION_RULES . '[' . $idx . '][enabled]'); ?>" value="1" <?php checked(!empty($rule['enabled'])); ?>> Да</label>
+										</td>
+										<td><input type="number" name="<?php echo esc_attr(MP_Yookassa_Receipt2_Settings::OPTION_RULES . '[' . $idx . '][priority]'); ?>" value="<?php echo esc_attr((string) (int) $rule['priority']); ?>" style="width:100px;"></td>
+										<td>
+											<select multiple size="5" name="<?php echo esc_attr(MP_Yookassa_Receipt2_Settings::OPTION_RULES . '[' . $idx . '][category_ids][]'); ?>" style="min-width:280px;">
+												<?php foreach ($categories as $cat) : ?>
+													<option value="<?php echo esc_attr((string) $cat->term_id); ?>" <?php selected(in_array((int) $cat->term_id, (array) $rule['category_ids'], true)); ?>>
+														<?php echo esc_html($cat->name . ' (#' . $cat->term_id . ')'); ?>
+													</option>
+												<?php endforeach; ?>
+											</select>
+										</td>
+										<td>
+											<select name="<?php echo esc_attr(MP_Yookassa_Receipt2_Settings::OPTION_RULES . '[' . $idx . '][payment_mode]'); ?>">
+												<?php foreach (MP_Yookassa_Receipt2_Settings::allowed_payment_modes() as $mode) : ?>
+													<option value="<?php echo esc_attr($mode); ?>" <?php selected($rule['payment_mode'], $mode); ?>><?php echo esc_html($mode); ?></option>
+												<?php endforeach; ?>
+											</select>
+										</td>
+										<td>
+											<select name="<?php echo esc_attr(MP_Yookassa_Receipt2_Settings::OPTION_RULES . '[' . $idx . '][payment_subject]'); ?>">
+												<?php foreach (MP_Yookassa_Receipt2_Settings::allowed_payment_subjects() as $subject) : ?>
+													<option value="<?php echo esc_attr($subject); ?>" <?php selected($rule['payment_subject'], $subject); ?>><?php echo esc_html($subject); ?></option>
+												<?php endforeach; ?>
+											</select>
+										</td>
+										<td><button type="button" class="button mp-receipt2-remove-rule">Удалить</button></td>
+									</tr>
+								<?php endforeach; ?>
+							</tbody>
+						</table>
+						<p style="margin-top:10px;">
+							<button type="button" class="button" id="mp-receipt2-add-rule">Добавить правило</button>
+						</p>
+
+						<script>
+						(function() {
+							const table = document.getElementById('mp-receipt2-rules-table');
+							const addBtn = document.getElementById('mp-receipt2-add-rule');
+							if (!table || !addBtn) return;
+							const tbody = table.querySelector('tbody');
+							const categoriesHtml = <?php echo wp_json_encode(implode('', array_map(static function($cat) {
+								return '<option value="' . (int) $cat->term_id . '">' . esc_html($cat->name . ' (#' . $cat->term_id . ')') . '</option>';
+							}, $categories))); ?>;
+							const modes = <?php echo wp_json_encode(MP_Yookassa_Receipt2_Settings::allowed_payment_modes()); ?>;
+							const subjects = <?php echo wp_json_encode(MP_Yookassa_Receipt2_Settings::allowed_payment_subjects()); ?>;
+							const optionName = <?php echo wp_json_encode(MP_Yookassa_Receipt2_Settings::OPTION_RULES); ?>;
+
+							function buildOptions(items, selected) {
+								return items.map((v) => '<option value="' + v + '"' + (v === selected ? ' selected' : '') + '>' + v + '</option>').join('');
+							}
+
+							function rowHtml(idx) {
+								return '' +
+								'<tr>' +
+									'<td><input type="hidden" name="' + optionName + '[' + idx + '][enabled]" value="0"><label><input type="checkbox" name="' + optionName + '[' + idx + '][enabled]" value="1" checked> Да</label></td>' +
+									'<td><input type="number" name="' + optionName + '[' + idx + '][priority]" value="100" style="width:100px;"></td>' +
+									'<td><select multiple size="5" name="' + optionName + '[' + idx + '][category_ids][]" style="min-width:280px;">' + categoriesHtml + '</select></td>' +
+									'<td><select name="' + optionName + '[' + idx + '][payment_mode]">' + buildOptions(modes, 'full_payment') + '</select></td>' +
+									'<td><select name="' + optionName + '[' + idx + '][payment_subject]">' + buildOptions(subjects, 'commodity') + '</select></td>' +
+									'<td><button type="button" class="button mp-receipt2-remove-rule">Удалить</button></td>' +
+								'</tr>';
+							}
+
+							addBtn.addEventListener('click', function() {
+								const idx = tbody.querySelectorAll('tr').length;
+								tbody.insertAdjacentHTML('beforeend', rowHtml(idx));
+							});
+
+							tbody.addEventListener('click', function(e) {
+								if (e.target && e.target.classList.contains('mp-receipt2-remove-rule')) {
+									const tr = e.target.closest('tr');
+									if (tr) tr.remove();
+								}
+							});
+						})();
+						</script>
+
 						<?php submit_button('Сохранить настройки'); ?>
 					</form>
 				</div>
