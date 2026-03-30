@@ -3,7 +3,7 @@
  * Plugin Name: MP YooKassa Receipt2 (Gift Cards)
  * Description: Sends the second fiscal receipt (settlement receipt) with fixed payment_mode/payment_subject for gift-card scenarios.
  * Version: 0.1.0
- * Author: Metaphysics Parfum (custom)
+ * Author: Popravkin Danil
  */
 
 if (!defined('ABSPATH')) {
@@ -38,6 +38,12 @@ final class MP_Yookassa_Receipt2_Plugin {
 		// Step 6: receipt builder.
 		if (!class_exists('MP_Yookassa_Receipt2_ReceiptBuilder')) {
 			require_once __DIR__ . '/mp-yookassa-receipt2-receipt-builder.php';
+		}
+
+		// Admin panel.
+		if (is_admin() && !class_exists('MP_Yookassa_Receipt2_Admin')) {
+			require_once __DIR__ . '/mp-yookassa-receipt2-admin.php';
+			MP_Yookassa_Receipt2_Admin::init();
 		}
 
 		// Register trigger for "delivery/fulfillment" stage.
