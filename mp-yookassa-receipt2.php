@@ -15,6 +15,11 @@ final class MP_Yookassa_Receipt2_Plugin {
 	const VERSION = '0.1.0';
 
 	public static function init(): void {
+		// Step 2: ensure settings are loaded.
+		if (!class_exists('MP_Yookassa_Receipt2_Settings')) {
+			require_once __DIR__ . '/mp-yookassa-receipt2-settings.php';
+		}
+
 		// Register trigger for "delivery/fulfillment" stage.
 		// (Step 2/next steps will implement actual logic.)
 		add_action('woocommerce_order_status_completed', [self::class, 'on_order_completed'], 20, 1);
@@ -29,6 +34,14 @@ final class MP_Yookassa_Receipt2_Plugin {
 	public static function on_order_completed($order_id): void {
 		if (!function_exists('wc_get_order')) {
 			return;
+		}
+
+		if (class_exists('MP_Yookassa_Receipt2_Settings')) {
+			$errors = MP_Yookassa_Receipt2_Settings::validate_for_api();
+			if (!empty($errors)) {
+				// Don't spam error_log on every completed order if disabled/misconfigured.
+				return;
+			}
 		}
 
 		$order = wc_get_order((int) $order_id);
