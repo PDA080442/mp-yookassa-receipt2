@@ -21,6 +21,9 @@ final class MP_Yookassa_Receipt2_ReceiptBuilder {
 		$items = [];
 		$warnings = [];
 		$total_items_amount = 0.0;
+		$default_mode = MP_Yookassa_Receipt2_Settings::get_default_payment_mode();
+		$default_subject = MP_Yookassa_Receipt2_Settings::get_default_payment_subject();
+		$rules = MP_Yookassa_Receipt2_Settings::get_rules();
 
 		foreach ($order->get_items('line_item') as $item) {
 			$product = $item->get_product();
@@ -48,6 +51,9 @@ final class MP_Yookassa_Receipt2_ReceiptBuilder {
 			$quantity = (float) wc_format_decimal($quantity, 3);
 			$line_amount = (float) wc_format_decimal($unit_amount * $quantity, wc_get_price_decimals());
 			$total_items_amount += $line_amount;
+			$rule = self::resolve_rule_for_product($product, $rules);
+			$payment_mode = $rule['payment_mode'] ?? $default_mode;
+			$payment_subject = $rule['payment_subject'] ?? $default_subject;
 
 			$items[] = [
 				'description' => self::sanitize_description($item->get_name()),
@@ -57,8 +63,8 @@ final class MP_Yookassa_Receipt2_ReceiptBuilder {
 					'currency' => $order->get_currency() ?: 'RUB',
 				],
 				'vat_code' => self::resolve_vat_code($item),
-				'payment_mode' => 'full_payment',
-				'payment_subject' => 'commodity',
+				'payment_mode' => $payment_mode,
+				'payment_subject' => $payment_subject,
 			];
 		}
 
@@ -174,6 +180,66 @@ final class MP_Yookassa_Receipt2_ReceiptBuilder {
 	 */
 	private static function money(float $amount): string {
 		return number_format((float) wc_format_decimal($amount, wc_get_price_decimals()), 2, '.', '');
+	}
+
+	/**
+	 * @param WC_Product $product
+	 * @param array<int,array<string,mixed>> $rules
+	 * @return array<string,mixed>
+	 */
+	private static function resolve_rule_for_product(WC_Product $product, array $rules): array {
+		if (empty($rules)) {
+			return [];
+		}
+
+		$product_cat_ids = self::get_product_category_ids($product);
+		if (empty($product_cat_ids)) {
+			return [];
+		}
+
+		foreach ($rules as $rule) {
+			if (empty($rule['enabled'])) {
+				continue;
+			}
+
+			$rule_cats = isset($rule['category_ids']) && is_array($rule['category_ids']) ? $rule['category_ids'] : [];
+			if (empty($rule_cats)) {
+				continue;
+			}
+
+			$intersect = array_intersect($product_cat_ids, array_map('intval', $rule_cats));
+			if (!empty($intersect)) {
+				return $rule;
+			}
+		}
+
+		return [];
+	}
+
+	/**
+	 * @param WC_Product $product
+	 * @return array<int,int>
+	 */
+	private static function get_product_category_ids(WC_Product $product): array {
+		$ids = [];
+
+		if (method_exists($product, 'get_category_ids')) {
+			$ids = array_map('intval', (array) $product->get_category_ids());
+		}
+
+		// Variations may not have own categories; use parent categories.
+		if (empty($ids) && $product->get_parent_id() > 0) {
+			$parent = wc_get_product($product->get_parent_id());
+			if ($parent && method_exists($parent, 'get_category_ids')) {
+				$ids = array_map('intval', (array) $parent->get_category_ids());
+			}
+		}
+
+		$ids = array_values(array_unique(array_filter($ids, static function ($id) {
+			return (int) $id > 0;
+		})));
+
+		return $ids;
 	}
 }
 
