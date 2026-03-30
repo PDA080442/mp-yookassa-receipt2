@@ -210,6 +210,7 @@ final class MP_Yookassa_Receipt2_Admin {
 			$categories = [];
 		}
 		$errors = MP_Yookassa_Receipt2_Settings::validate_for_api();
+		$preflight = self::build_preflight_warnings($enabled, $shop_id, $secret, $rules, $default_mode, $default_subject);
 		$log_path = self::get_current_log_path();
 		$log_tail = self::tail_log($log_path, 25);
 		?>
@@ -218,6 +219,16 @@ final class MP_Yookassa_Receipt2_Admin {
 			<p>Настройки отправки второго чека ЮKassa для сценариев оплаты подарочной картой.</p>
 
 			<?php settings_errors('mp_yookassa_receipt2'); ?>
+			<?php if (!empty($preflight)) : ?>
+				<div style="background:#fff4e5;border:1px solid #dba617;border-left:4px solid #dba617;padding:12px;max-width:1400px;margin:12px 0;">
+					<h2 style="margin-top:0;">Preflight-проверка перед выкладкой</h2>
+					<ul style="margin:8px 0 0 18px;">
+						<?php foreach ($preflight as $warn) : ?>
+							<li><?php echo esc_html($warn); ?></li>
+						<?php endforeach; ?>
+					</ul>
+				</div>
+			<?php endif; ?>
 
 			<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:1400px;">
 				<div style="background:#fff;border:1px solid #ccd0d4;padding:16px;">
@@ -552,6 +563,90 @@ final class MP_Yookassa_Receipt2_Admin {
 		$rows = explode("\n", trim($content));
 		$rows = array_slice($rows, -1 * max(1, $lines));
 		return implode("\n", $rows);
+	}
+
+	/**
+	 * @param bool $enabled
+	 * @param string $shop_id
+	 * @param string $secret
+	 * @param array<int,array<string,mixed>> $rules
+	 * @param string $default_mode
+	 * @param string $default_subject
+	 * @return array<int,string>
+	 */
+	private static function build_preflight_warnings(
+		bool $enabled,
+		string $shop_id,
+		string $secret,
+		array $rules,
+		string $default_mode,
+		string $default_subject
+	): array {
+		$warnings = [];
+
+		if (!$enabled) {
+			$warnings[] = 'Плагин выключен: второй чек отправляться не будет.';
+		}
+		if (trim($shop_id) === '') {
+			$warnings[] = 'Не заполнен Shop ID.';
+		}
+		if (trim($secret) === '') {
+			$warnings[] = 'Не заполнен Secret Key.';
+		}
+
+		$active_rules = array_values(array_filter($rules, static function ($rule) {
+			return !empty($rule['enabled']);
+		}));
+		if (empty($active_rules)) {
+			$warnings[] = 'Нет активных правил по категориям: будут применяться только default значения.';
+		}
+
+		$gift_card_categories = self::get_gift_card_category_ids();
+		if (!empty($gift_card_categories) && !empty($active_rules)) {
+			$has_gift_card_rule = false;
+			foreach ($active_rules as $rule) {
+				$rule_cats = isset($rule['category_ids']) && is_array($rule['category_ids']) ? array_map('intval', $rule['category_ids']) : [];
+				if (!empty(array_intersect($gift_card_categories, $rule_cats))) {
+					$has_gift_card_rule = true;
+					break;
+				}
+			}
+			if (!$has_gift_card_rule) {
+				$warnings[] = 'Не найдено активного правила для категорий, похожих на "подарочные карты".';
+			}
+		}
+
+		if ($default_mode !== 'full_payment' || $default_subject !== 'commodity') {
+			$warnings[] = 'Default значения отличаются от full_payment/commodity. Убедитесь, что это ожидаемое поведение.';
+		}
+
+		return $warnings;
+	}
+
+	/**
+	 * Heuristic helper for preflight only.
+	 *
+	 * @return array<int,int>
+	 */
+	private static function get_gift_card_category_ids(): array {
+		$terms = get_terms([
+			'taxonomy' => 'product_cat',
+			'hide_empty' => false,
+		]);
+		if (is_wp_error($terms) || !is_array($terms)) {
+			return [];
+		}
+
+		$ids = [];
+		foreach ($terms as $term) {
+			$name = isset($term->name) ? (string) $term->name : '';
+			$slug = isset($term->slug) ? (string) $term->slug : '';
+			$haystack = strtolower($name . ' ' . $slug);
+			if (strpos($haystack, 'gift') !== false || strpos($haystack, 'подар') !== false) {
+				$ids[] = (int) $term->term_id;
+			}
+		}
+		return array_values(array_unique(array_filter($ids)));
 	}
 
 	/**
