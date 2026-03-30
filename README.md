@@ -18,11 +18,12 @@
 ## 2) Где лежат файлы
 
 - `mp-yookassa-receipt2.php` — bootstrap + главный поток.
-- `mp-yookassa-receipt2-settings.php` — настройки.
-- `mp-yookassa-receipt2-logger.php` — логгер.
-- `mp-yookassa-receipt2-api-client.php` — клиент API ЮKassa.
-- `mp-yookassa-receipt2-order-links.php` — определение settlement-контекста + `source_payment_id`.
-- `mp-yookassa-receipt2-receipt-builder.php` — построение `items/settlements`.
+- `includes/class-mp-yookassa-receipt2-settings.php` — настройки.
+- `includes/class-mp-yookassa-receipt2-logger.php` — логгер.
+- `includes/class-mp-yookassa-receipt2-api-client.php` — клиент API ЮKassa.
+- `includes/class-mp-yookassa-receipt2-order-links.php` — определение settlement-контекста + `source_payment_id`.
+- `includes/class-mp-yookassa-receipt2-receipt-builder.php` — построение `items/settlements`.
+- `admin/class-mp-yookassa-receipt2-admin.php` — админ-панель.
 
 ## 3) Минимальные требования для работы
 
