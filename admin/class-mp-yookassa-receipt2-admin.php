@@ -445,10 +445,47 @@ final class MP_Yookassa_Receipt2_Admin {
 		}
 
 		$resolved = MP_Yookassa_Receipt2_OrderLinks::resolve_for_order($order);
+		$rules = MP_Yookassa_Receipt2_Settings::get_rules();
+		$default_mode = MP_Yookassa_Receipt2_Settings::get_default_payment_mode();
+		$default_subject = MP_Yookassa_Receipt2_Settings::get_default_payment_subject();
+
+		$items_preview = [];
+		foreach ($order->get_items('line_item') as $item_id => $item) {
+			$product = $item->get_product();
+			if (!$product) {
+				continue;
+			}
+
+			$cat_ids = self::get_product_category_ids_for_debug($product);
+			$matched = self::resolve_rule_for_debug($cat_ids, $rules);
+			$items_preview[] = [
+				'item_id' => (int) $item_id,
+				'name' => $item->get_name(),
+				'product_id' => (int) $item->get_product_id(),
+				'variation_id' => (int) $item->get_variation_id(),
+				'category_ids' => $cat_ids,
+				'applied' => [
+					'payment_mode' => $matched['payment_mode'] ?? $default_mode,
+					'payment_subject' => $matched['payment_subject'] ?? $default_subject,
+				],
+				'matched_rule' => $matched ? [
+					'priority' => $matched['priority'],
+					'category_ids' => $matched['category_ids'],
+					'enabled' => $matched['enabled'],
+				] : null,
+			];
+		}
+
 		return [
 			'order_id' => $order_id,
 			'status' => $order->get_status(),
 			'resolved' => $resolved,
+			'defaults' => [
+				'payment_mode' => $default_mode,
+				'payment_subject' => $default_subject,
+			],
+			'rules_count' => count($rules),
+			'items_preview' => $items_preview,
 			'meta' => [
 				'mp_receipt2_sent' => get_post_meta($order_id, 'mp_receipt2_sent', true),
 				'mp_receipt2_id' => get_post_meta($order_id, 'mp_receipt2_id', true),
@@ -477,6 +514,52 @@ final class MP_Yookassa_Receipt2_Admin {
 		$rows = explode("\n", trim($content));
 		$rows = array_slice($rows, -1 * max(1, $lines));
 		return implode("\n", $rows);
+	}
+
+	/**
+	 * @param WC_Product $product
+	 * @return array<int,int>
+	 */
+	private static function get_product_category_ids_for_debug(WC_Product $product): array {
+		$ids = [];
+		if (method_exists($product, 'get_category_ids')) {
+			$ids = array_map('intval', (array) $product->get_category_ids());
+		}
+		if (empty($ids) && $product->get_parent_id() > 0) {
+			$parent = wc_get_product($product->get_parent_id());
+			if ($parent && method_exists($parent, 'get_category_ids')) {
+				$ids = array_map('intval', (array) $parent->get_category_ids());
+			}
+		}
+		$ids = array_values(array_unique(array_filter($ids, static function ($id) {
+			return (int) $id > 0;
+		})));
+		return $ids;
+	}
+
+	/**
+	 * @param array<int,int> $product_cat_ids
+	 * @param array<int,array<string,mixed>> $rules
+	 * @return array<string,mixed>
+	 */
+	private static function resolve_rule_for_debug(array $product_cat_ids, array $rules): array {
+		if (empty($product_cat_ids) || empty($rules)) {
+			return [];
+		}
+		foreach ($rules as $rule) {
+			if (empty($rule['enabled'])) {
+				continue;
+			}
+			$rule_cats = isset($rule['category_ids']) && is_array($rule['category_ids']) ? $rule['category_ids'] : [];
+			if (empty($rule_cats)) {
+				continue;
+			}
+			$intersect = array_intersect($product_cat_ids, array_map('intval', $rule_cats));
+			if (!empty($intersect)) {
+				return $rule;
+			}
+		}
+		return [];
 	}
 }
 
