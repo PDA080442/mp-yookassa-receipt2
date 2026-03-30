@@ -17,32 +17,32 @@ final class MP_Yookassa_Receipt2_Plugin {
 	public static function init(): void {
 		// Step 2: settings loader.
 		if (!class_exists('MP_Yookassa_Receipt2_Settings')) {
-			require_once __DIR__ . '/mp-yookassa-receipt2-settings.php';
+			require_once __DIR__ . '/includes/class-mp-yookassa-receipt2-settings.php';
 		}
 
 		// Step 3: logger loader.
 		if (!class_exists('MP_Yookassa_Receipt2_Logger')) {
-			require_once __DIR__ . '/mp-yookassa-receipt2-logger.php';
+			require_once __DIR__ . '/includes/class-mp-yookassa-receipt2-logger.php';
 		}
 
 		// Step 4: API client loader.
 		if (!class_exists('MP_Yookassa_Receipt2_ApiClient')) {
-			require_once __DIR__ . '/mp-yookassa-receipt2-api-client.php';
+			require_once __DIR__ . '/includes/class-mp-yookassa-receipt2-api-client.php';
 		}
 
 		// Step 5: order links resolver (gift-card settlement + source payment id).
 		if (!class_exists('MP_Yookassa_Receipt2_OrderLinks')) {
-			require_once __DIR__ . '/mp-yookassa-receipt2-order-links.php';
+			require_once __DIR__ . '/includes/class-mp-yookassa-receipt2-order-links.php';
 		}
 
 		// Step 6: receipt builder.
 		if (!class_exists('MP_Yookassa_Receipt2_ReceiptBuilder')) {
-			require_once __DIR__ . '/mp-yookassa-receipt2-receipt-builder.php';
+			require_once __DIR__ . '/includes/class-mp-yookassa-receipt2-receipt-builder.php';
 		}
 
 		// Admin panel.
 		if (is_admin() && !class_exists('MP_Yookassa_Receipt2_Admin')) {
-			require_once __DIR__ . '/mp-yookassa-receipt2-admin.php';
+			require_once __DIR__ . '/admin/class-mp-yookassa-receipt2-admin.php';
 			MP_Yookassa_Receipt2_Admin::init();
 		}
 
