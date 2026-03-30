@@ -1,0 +1,1 @@
+# mp-yookassa-receipt2
