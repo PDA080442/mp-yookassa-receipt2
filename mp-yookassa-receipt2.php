@@ -41,8 +41,9 @@ final class MP_Yookassa_Receipt2_Plugin {
 		}
 
 		// Register trigger for "delivery/fulfillment" stage.
-		// (Step 2/next steps will implement actual logic.)
 		add_action('woocommerce_order_status_completed', [self::class, 'on_order_completed'], 20, 1);
+		add_filter('woocommerce_order_actions', [self::class, 'register_order_action']);
+		add_action('woocommerce_order_action_mp_yookassa_receipt2_resend', [self::class, 'on_manual_resend_order_action']);
 	}
 
 	/**
@@ -80,18 +81,63 @@ final class MP_Yookassa_Receipt2_Plugin {
 			return;
 		}
 
+		self::process_order($order, false);
+	}
+
+	/**
+	 * Add manual Woo admin order action.
+	 *
+	 * @param array<string,string> $actions
+	 * @return array<string,string>
+	 */
+	public static function register_order_action($actions): array {
+		if (!is_array($actions)) {
+			$actions = [];
+		}
+		$actions['mp_yookassa_receipt2_resend'] = 'Отправить второй чек ЮKassa повторно';
+		return $actions;
+	}
+
+	/**
+	 * Manual resend from Woo order actions dropdown.
+	 *
+	 * @param WC_Order $order
+	 * @return void
+	 */
+	public static function on_manual_resend_order_action($order): void {
+		if (!$order instanceof WC_Order) {
+			return;
+		}
+
+		$order_id = (int) $order->get_id();
+		delete_post_meta($order_id, 'mp_receipt2_sent');
+		self::process_order($order, true);
+	}
+
+	/**
+	 * Unified processing flow (auto + manual resend).
+	 *
+	 * @param WC_Order $order
+	 * @param bool $manual_retry
+	 * @return void
+	 */
+	private static function process_order(WC_Order $order, bool $manual_retry): void {
+		$order_id = (int) $order->get_id();
+
 		$resolved = MP_Yookassa_Receipt2_OrderLinks::resolve_for_order($order);
 		if (empty($resolved['is_gift_card_settlement'])) {
-			MP_Yookassa_Receipt2_Logger::log('DEBUG', (int) $order_id, 'skip_not_gift_card_settlement', [
+			MP_Yookassa_Receipt2_Logger::log('DEBUG', $order_id, 'skip_not_gift_card_settlement', [
 				'reason' => $resolved['reason'],
+				'manual_retry' => $manual_retry,
 			]);
 			return;
 		}
 
 		if (empty($resolved['source_payment_id'])) {
-			MP_Yookassa_Receipt2_Logger::log('ERROR', (int) $order_id, 'skip_missing_source_payment_id', [
+			MP_Yookassa_Receipt2_Logger::log('ERROR', $order_id, 'skip_missing_source_payment_id', [
 				'reason' => $resolved['reason'],
 				'settlement_amount' => $resolved['settlement_amount'],
+				'manual_retry' => $manual_retry,
 			]);
 			return;
 		}
@@ -99,12 +145,13 @@ final class MP_Yookassa_Receipt2_Plugin {
 		$receipt_data = MP_Yookassa_Receipt2_ReceiptBuilder::build($order, (float) $resolved['settlement_amount']);
 		$items_count = is_array($receipt_data['items']) ? count($receipt_data['items']) : 0;
 		if ($items_count < 1) {
-			MP_Yookassa_Receipt2_Logger::log('ERROR', (int) $order_id, 'skip_empty_receipt_items', [
+			MP_Yookassa_Receipt2_Logger::log('ERROR', $order_id, 'skip_empty_receipt_items', [
 				'settlement_amount' => $resolved['settlement_amount'],
 				'source_payment_id' => $resolved['source_payment_id'],
 				'warnings' => $receipt_data['warnings'],
+				'manual_retry' => $manual_retry,
 			]);
-			update_post_meta((int) $order_id, 'mp_receipt2_error', 'Empty receipt items');
+			update_post_meta($order_id, 'mp_receipt2_error', 'Empty receipt items');
 			return;
 		}
 
@@ -117,21 +164,25 @@ final class MP_Yookassa_Receipt2_Plugin {
 		);
 
 		if (!empty($api_result['ok'])) {
-			update_post_meta((int) $order_id, 'mp_receipt2_sent', 'yes');
-			update_post_meta((int) $order_id, 'mp_receipt2_id', (string) $api_result['receipt_id']);
-			update_post_meta((int) $order_id, 'mp_receipt2_idempotence_key', (string) $api_result['idempotence_key']);
-			delete_post_meta((int) $order_id, 'mp_receipt2_error');
+			update_post_meta($order_id, 'mp_receipt2_sent', 'yes');
+			update_post_meta($order_id, 'mp_receipt2_id', (string) $api_result['receipt_id']);
+			update_post_meta($order_id, 'mp_receipt2_idempotence_key', (string) $api_result['idempotence_key']);
+			delete_post_meta($order_id, 'mp_receipt2_error');
 
-			MP_Yookassa_Receipt2_Logger::log('INFO', (int) $order_id, 'receipt2_sent_success', [
+			MP_Yookassa_Receipt2_Logger::log('INFO', $order_id, 'receipt2_sent_success', [
 				'source_payment_id' => $resolved['source_payment_id'],
 				'receipt_id' => $api_result['receipt_id'],
 				'status_code' => $api_result['status_code'],
 				'idempotence_key' => $api_result['idempotence_key'],
+				'manual_retry' => $manual_retry,
 				'items_count' => $items_count,
 				'total_items_amount' => $receipt_data['total_items_amount'],
 				'settlement_amount' => $resolved['settlement_amount'],
 				'warnings' => $receipt_data['warnings'],
 			]);
+			if ($manual_retry) {
+				$order->add_order_note('Второй чек ЮKassa отправлен вручную успешно.');
+			}
 			return;
 		}
 
@@ -139,20 +190,24 @@ final class MP_Yookassa_Receipt2_Plugin {
 			? $api_result['error']
 			: 'Unknown send_receipt error';
 
-		update_post_meta((int) $order_id, 'mp_receipt2_error', $error_message);
-		update_post_meta((int) $order_id, 'mp_receipt2_idempotence_key', (string) $api_result['idempotence_key']);
+		update_post_meta($order_id, 'mp_receipt2_error', $error_message);
+		update_post_meta($order_id, 'mp_receipt2_idempotence_key', (string) $api_result['idempotence_key']);
 
-		MP_Yookassa_Receipt2_Logger::log('ERROR', (int) $order_id, 'receipt2_sent_failed', [
+		MP_Yookassa_Receipt2_Logger::log('ERROR', $order_id, 'receipt2_sent_failed', [
 			'source_payment_id' => $resolved['source_payment_id'],
 			'status_code' => $api_result['status_code'],
 			'idempotence_key' => $api_result['idempotence_key'],
 			'error' => $error_message,
 			'response_body' => $api_result['response_body'],
+			'manual_retry' => $manual_retry,
 			'items_count' => $items_count,
 			'total_items_amount' => $receipt_data['total_items_amount'],
 			'settlement_amount' => $resolved['settlement_amount'],
 			'warnings' => $receipt_data['warnings'],
 		]);
+		if ($manual_retry) {
+			$order->add_order_note('Ошибка ручной отправки второго чека ЮKassa: ' . $error_message);
+		}
 
 		// Keep mp_receipt2_sent unset on failure to allow manual re-trigger.
 	}
