@@ -15,7 +15,7 @@ final class MP_Yookassa_Receipt2_Plugin {
 	const VERSION = '0.1.0';
 
 	public static function init(): void {
-		// Step 2: ensure settings are loaded.
+		// Step 2: settings loader.
 		if (!class_exists('MP_Yookassa_Receipt2_Settings')) {
 			require_once __DIR__ . '/mp-yookassa-receipt2-settings.php';
 		}
@@ -39,7 +39,12 @@ final class MP_Yookassa_Receipt2_Plugin {
 		if (class_exists('MP_Yookassa_Receipt2_Settings')) {
 			$errors = MP_Yookassa_Receipt2_Settings::validate_for_api();
 			if (!empty($errors)) {
-				// Don't spam error_log on every completed order if disabled/misconfigured.
+				// Temporary log placeholder (step 3 will replace it with proper logger).
+				error_log(sprintf(
+					'[mp-yookassa-receipt2] skip due to settings: order_id=%d errors=%s',
+					(int) $order_id,
+					implode('; ', $errors)
+				));
 				return;
 			}
 		}

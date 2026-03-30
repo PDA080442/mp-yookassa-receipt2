@@ -4,66 +4,91 @@ if (!defined('ABSPATH')) {
 }
 
 /**
- * Step 2: Configuration/settings loader.
+ * Settings for mp-yookassa-receipt2.
  *
- * Note: To keep this mini-plugin simple, we read settings from wp_options.
- * Admin UI can be added later (step 7/9 in the plan).
+ * Step 2: config loading only (no admin UI yet).
  */
 final class MP_Yookassa_Receipt2_Settings {
-	const OPT_ENABLED = 'mp_receipt2_enabled';
-	const OPT_SANDBOX = 'mp_receipt2_sandbox';
-	const OPT_SHOP_ID = 'mp_receipt2_shop_id';
-	const OPT_SECRET_KEY = 'mp_receipt2_secret_key';
-	const OPT_ENDPOINT = 'mp_receipt2_receipts_endpoint';
-
-	public static function is_enabled(): bool {
-		return (string) get_option(self::OPT_ENABLED, '0') === '1';
-	}
-
-	public static function is_sandbox(): bool {
-		return (string) get_option(self::OPT_SANDBOX, '0') === '1';
-	}
+	const OPTION_ENABLED = 'mp_yookassa_receipt2_enabled';
+	const OPTION_SANDBOX = 'mp_yookassa_receipt2_sandbox';
+	const OPTION_SHOP_ID = 'mp_yookassa_receipt2_shop_id';
+	const OPTION_SECRET_KEY = 'mp_yookassa_receipt2_secret_key';
 
 	/**
-	 * If endpoint differs in your environment, override it via option or filter.
+	 * @return bool
 	 */
-	public static function receipts_endpoint(): string {
-		$endpoint = (string) get_option(self::OPT_ENDPOINT, 'https://api.yookassa.ru/v3/receipts');
-		$endpoint = trim($endpoint);
-		if ($endpoint === '') {
-			$endpoint = 'https://api.yookassa.ru/v3/receipts';
+	public static function is_enabled(): bool {
+		// Allow override via constants for quick testing.
+		if (defined('MP_YOOKASSA_RECEIPT2_ENABLED')) {
+			return (bool) MP_YOOKASSA_RECEIPT2_ENABLED;
 		}
 
-		return (string) apply_filters('mp_receipt2_receipts_endpoint', $endpoint, self::is_sandbox());
-	}
-
-	public static function shop_id(): string {
-		return (string) trim((string) get_option(self::OPT_SHOP_ID, ''));
-	}
-
-	public static function secret_key(): string {
-		return (string) get_option(self::OPT_SECRET_KEY, '');
+		return (bool) get_option(self::OPTION_ENABLED, false);
 	}
 
 	/**
-	 * Validate required settings for API calls.
-	 *
-	 * @return string[] Array of error messages. Empty array means OK.
+	 * @return bool
+	 */
+	public static function is_sandbox(): bool {
+		if (defined('MP_YOOKASSA_RECEIPT2_SANDBOX')) {
+			return (bool) MP_YOOKASSA_RECEIPT2_SANDBOX;
+		}
+
+		return (bool) get_option(self::OPTION_SANDBOX, false);
+	}
+
+	/**
+	 * @return string
+	 */
+	public static function get_shop_id(): string {
+		if (defined('MP_YOOKASSA_RECEIPT2_SHOP_ID')) {
+			return (string) MP_YOOKASSA_RECEIPT2_SHOP_ID;
+		}
+
+		$val = get_option(self::OPTION_SHOP_ID, '');
+		return is_string($val) ? $val : '';
+	}
+
+	/**
+	 * @return string
+	 */
+	public static function get_secret_key(): string {
+		if (defined('MP_YOOKASSA_RECEIPT2_SECRET_KEY')) {
+			return (string) MP_YOOKASSA_RECEIPT2_SECRET_KEY;
+		}
+
+		$val = get_option(self::OPTION_SECRET_KEY, '');
+		return is_string($val) ? $val : '';
+	}
+
+	/**
+	 * @return string
+	 */
+	public static function get_api_base_url(): string {
+		return self::is_sandbox()
+			? 'https://api-preprod.yookassa.ru/v3/receipts'
+			: 'https://api.yookassa.ru/v3/receipts';
+	}
+
+	/**
+	 * @return array<string> list of problems
 	 */
 	public static function validate_for_api(): array {
 		$errors = [];
 
 		if (!self::is_enabled()) {
-			$errors[] = 'Plugin disabled.';
+			$errors[] = 'Plugin is disabled';
 			return $errors;
 		}
 
-		if (self::shop_id() === '') {
-			$errors[] = 'Missing shop_id (option mp_receipt2_shop_id).';
-		}
+		$shopId = trim(self::get_shop_id());
+		$secret = trim(self::get_secret_key());
 
-		if (self::secret_key() === '') {
-			$errors[] = 'Missing secret_key (option mp_receipt2_secret_key).';
+		if ($shopId === '') {
+			$errors[] = 'Missing shop_id (set option mp_yookassa_receipt2_shop_id or constant MP_YOOKASSA_RECEIPT2_SHOP_ID)';
+		}
+		if ($secret === '') {
+			$errors[] = 'Missing secret_key (set option mp_yookassa_receipt2_secret_key or constant MP_YOOKASSA_RECEIPT2_SECRET_KEY)';
 		}
 
 		return $errors;
