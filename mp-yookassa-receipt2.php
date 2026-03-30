@@ -20,6 +20,11 @@ final class MP_Yookassa_Receipt2_Plugin {
 			require_once __DIR__ . '/mp-yookassa-receipt2-settings.php';
 		}
 
+		// Step 3: logger loader.
+		if (!class_exists('MP_Yookassa_Receipt2_Logger')) {
+			require_once __DIR__ . '/mp-yookassa-receipt2-logger.php';
+		}
+
 		// Register trigger for "delivery/fulfillment" stage.
 		// (Step 2/next steps will implement actual logic.)
 		add_action('woocommerce_order_status_completed', [self::class, 'on_order_completed'], 20, 1);
@@ -39,12 +44,12 @@ final class MP_Yookassa_Receipt2_Plugin {
 		if (class_exists('MP_Yookassa_Receipt2_Settings')) {
 			$errors = MP_Yookassa_Receipt2_Settings::validate_for_api();
 			if (!empty($errors)) {
-				// Temporary log placeholder (step 3 will replace it with proper logger).
-				error_log(sprintf(
-					'[mp-yookassa-receipt2] skip due to settings: order_id=%d errors=%s',
-					(int) $order_id,
-					implode('; ', $errors)
-				));
+				// Skip if plugin is disabled or misconfigured.
+				if (class_exists('MP_Yookassa_Receipt2_Logger')) {
+					MP_Yookassa_Receipt2_Logger::log('ERROR', (int) $order_id, 'settings_invalid', [
+						'errors' => $errors,
+					]);
+				}
 				return;
 			}
 		}
@@ -60,8 +65,10 @@ final class MP_Yookassa_Receipt2_Plugin {
 			return;
 		}
 
-		// Temporary debug log until we add a dedicated logger (step 3).
-		error_log(sprintf('[mp-yookassa-receipt2] completed hook fired: order_id=%d', (int) $order_id));
+		// Temporary debug log until we add actual sending logic.
+		if (class_exists('MP_Yookassa_Receipt2_Logger')) {
+			MP_Yookassa_Receipt2_Logger::log('DEBUG', (int) $order_id, 'woocommerce_order_status_completed_fired', []);
+		}
 	}
 }
 
