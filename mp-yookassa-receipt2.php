@@ -97,18 +97,64 @@ final class MP_Yookassa_Receipt2_Plugin {
 		}
 
 		$receipt_data = MP_Yookassa_Receipt2_ReceiptBuilder::build($order, (float) $resolved['settlement_amount']);
-
-		// Temporary debug log until we add actual sending logic (step 7).
-		if (class_exists('MP_Yookassa_Receipt2_Logger')) {
-			MP_Yookassa_Receipt2_Logger::log('DEBUG', (int) $order_id, 'receipt_built_ready_for_send', [
+		$items_count = is_array($receipt_data['items']) ? count($receipt_data['items']) : 0;
+		if ($items_count < 1) {
+			MP_Yookassa_Receipt2_Logger::log('ERROR', (int) $order_id, 'skip_empty_receipt_items', [
 				'settlement_amount' => $resolved['settlement_amount'],
 				'source_payment_id' => $resolved['source_payment_id'],
-				'reason' => $resolved['reason'],
-				'items_count' => is_array($receipt_data['items']) ? count($receipt_data['items']) : 0,
-				'total_items_amount' => $receipt_data['total_items_amount'],
 				'warnings' => $receipt_data['warnings'],
 			]);
+			update_post_meta((int) $order_id, 'mp_receipt2_error', 'Empty receipt items');
+			return;
 		}
+
+		$api_result = MP_Yookassa_Receipt2_ApiClient::send_receipt(
+			(string) $resolved['source_payment_id'],
+			[
+				'items' => $receipt_data['items'],
+				'settlements' => $receipt_data['settlements'],
+			]
+		);
+
+		if (!empty($api_result['ok'])) {
+			update_post_meta((int) $order_id, 'mp_receipt2_sent', 'yes');
+			update_post_meta((int) $order_id, 'mp_receipt2_id', (string) $api_result['receipt_id']);
+			update_post_meta((int) $order_id, 'mp_receipt2_idempotence_key', (string) $api_result['idempotence_key']);
+			delete_post_meta((int) $order_id, 'mp_receipt2_error');
+
+			MP_Yookassa_Receipt2_Logger::log('INFO', (int) $order_id, 'receipt2_sent_success', [
+				'source_payment_id' => $resolved['source_payment_id'],
+				'receipt_id' => $api_result['receipt_id'],
+				'status_code' => $api_result['status_code'],
+				'idempotence_key' => $api_result['idempotence_key'],
+				'items_count' => $items_count,
+				'total_items_amount' => $receipt_data['total_items_amount'],
+				'settlement_amount' => $resolved['settlement_amount'],
+				'warnings' => $receipt_data['warnings'],
+			]);
+			return;
+		}
+
+		$error_message = isset($api_result['error']) && is_string($api_result['error']) && $api_result['error'] !== ''
+			? $api_result['error']
+			: 'Unknown send_receipt error';
+
+		update_post_meta((int) $order_id, 'mp_receipt2_error', $error_message);
+		update_post_meta((int) $order_id, 'mp_receipt2_idempotence_key', (string) $api_result['idempotence_key']);
+
+		MP_Yookassa_Receipt2_Logger::log('ERROR', (int) $order_id, 'receipt2_sent_failed', [
+			'source_payment_id' => $resolved['source_payment_id'],
+			'status_code' => $api_result['status_code'],
+			'idempotence_key' => $api_result['idempotence_key'],
+			'error' => $error_message,
+			'response_body' => $api_result['response_body'],
+			'items_count' => $items_count,
+			'total_items_amount' => $receipt_data['total_items_amount'],
+			'settlement_amount' => $resolved['settlement_amount'],
+			'warnings' => $receipt_data['warnings'],
+		]);
+
+		// Keep mp_receipt2_sent unset on failure to allow manual re-trigger.
 	}
 }
 
