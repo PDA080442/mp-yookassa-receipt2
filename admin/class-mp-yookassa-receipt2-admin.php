@@ -211,6 +211,7 @@ final class MP_Yookassa_Receipt2_Admin {
 		}
 		$errors = MP_Yookassa_Receipt2_Settings::validate_for_api();
 		$preflight = self::build_preflight_warnings($enabled, $shop_id, $secret, $rules, $default_mode, $default_subject);
+		$readiness = self::build_readiness_checklist($enabled, $shop_id, $secret, $rules);
 		$log_path = self::get_current_log_path();
 		$log_tail = self::tail_log($log_path, 25);
 		?>
@@ -229,6 +230,21 @@ final class MP_Yookassa_Receipt2_Admin {
 					</ul>
 				</div>
 			<?php endif; ?>
+			<div style="background:#fff;border:1px solid #ccd0d4;padding:12px;max-width:1400px;margin:12px 0;">
+				<h2 style="margin-top:0;">
+					Статус готовности к загрузке:
+					<?php if (!empty($readiness['is_ready'])) : ?>
+						<span style="color:#008a20;">PASS</span>
+					<?php else : ?>
+						<span style="color:#b32d2e;">WARN</span>
+					<?php endif; ?>
+				</h2>
+				<ul style="margin:8px 0 0 18px;">
+					<?php foreach ($readiness['checks'] as $check) : ?>
+						<li><strong><?php echo !empty($check['ok']) ? 'PASS' : 'WARN'; ?></strong> — <?php echo esc_html((string) $check['label']); ?></li>
+					<?php endforeach; ?>
+				</ul>
+			</div>
 
 			<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:1400px;">
 				<div style="background:#fff;border:1px solid #ccd0d4;padding:16px;">
@@ -647,6 +663,56 @@ final class MP_Yookassa_Receipt2_Admin {
 			}
 		}
 		return array_values(array_unique(array_filter($ids)));
+	}
+
+	/**
+	 * @param bool $enabled
+	 * @param string $shop_id
+	 * @param string $secret
+	 * @param array<int,array<string,mixed>> $rules
+	 * @return array{is_ready:bool,checks:array<int,array{ok:bool,label:string}>}
+	 */
+	private static function build_readiness_checklist(
+		bool $enabled,
+		string $shop_id,
+		string $secret,
+		array $rules
+	): array {
+		$checks = [];
+		$checks[] = ['ok' => $enabled, 'label' => 'Плагин включен'];
+		$checks[] = ['ok' => trim($shop_id) !== '', 'label' => 'Заполнен Shop ID'];
+		$checks[] = ['ok' => trim($secret) !== '', 'label' => 'Заполнен Secret Key'];
+
+		$active_rules = array_values(array_filter($rules, static function ($rule) {
+			return !empty($rule['enabled']);
+		}));
+		$checks[] = ['ok' => count($active_rules) > 0, 'label' => 'Есть хотя бы одно активное правило по категориям'];
+
+		$gift_card_categories = self::get_gift_card_category_ids();
+		if (!empty($gift_card_categories)) {
+			$gift_card_rule_found = false;
+			foreach ($active_rules as $rule) {
+				$rule_cats = isset($rule['category_ids']) && is_array($rule['category_ids']) ? array_map('intval', $rule['category_ids']) : [];
+				if (!empty(array_intersect($gift_card_categories, $rule_cats))) {
+					$gift_card_rule_found = true;
+					break;
+				}
+			}
+			$checks[] = ['ok' => $gift_card_rule_found, 'label' => 'Для gift-card категории найдено активное правило'];
+		}
+
+		$is_ready = true;
+		foreach ($checks as $check) {
+			if (empty($check['ok'])) {
+				$is_ready = false;
+				break;
+			}
+		}
+
+		return [
+			'is_ready' => $is_ready,
+			'checks' => $checks,
+		];
 	}
 
 	/**
